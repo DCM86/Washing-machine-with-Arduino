@@ -1,0 +1,321 @@
+/*
+Control de lavadora de carga vertical con arduino UNO
+Es un programa muy básico pero funciona.
+Los motores y demás se accionan mediante módulos de relés de 10 amperios que de momento han aguantado.
+El tiempo de cada trabajo se mide en ciclos derecha-izquierda.
+El nivel de agua se mide mediante lectores de contacto con el agua que se ajustan a mano.
+Cada salida está puenteada con un led que se enciende al activarla.
+Varios leds indican el ciclo que se está haciendo.
+El centrifugado está sincronisado con el modelo de lavadora para que de tiempo a engranar los mecanismos.
+El centrifugado enciende en varias etapas simulando el funcionamiento original de la lavadora.
+Incluye pin para buzer opcional y librería para tonos musicales.
+Incluye comunicación con puerto serie que imprime lo que está haciendo en cada momento
+LE FALTA:
+-La electro-válvula del suavizante no está terminada de programar.
+-La electro-válvula del agua caliente no está contemplada.
+-No está preparado para pausas.
+-No está programada para regular los últimos giros equilibrando la distribución de la ropa en el tambor.
+-No está conectado a los medidores de carga desconpensada y a veces hay que abortar el centrifugado a mano desconectando el motor.
+-No está conectado el sensor de la tapa y no pausa el centrifugado al abrirla.
+-No tiene botones y no se pueden regular los parámetros ni ir a un trabajo concreto sin volver a cargar el programa tras modificarlo desde el ordenador.
+-Para su uso efectivo hay que estar pendiente de la lavadora y/o tener un juego de interuptores para desactivar y activar el centrifugado manualmente.
+-No hay un relé que corte la corriente automáticamente hasta que la placa esté operativa y si se deja pasar la coriente antes de encender el arduino o
+este se reinicia se vuelve un poco loca y según el modelo puede romper o desgastar algunas partes mecánicas.
+¡¡¡¡¡No se recomienda su uso en estas condiciones!!!!
+*/
+
+#include "pitches.h"
+
+// notes in the melody:
+int melody[] = {
+  NOTE_C4, NOTE_G3, NOTE_G3, NOTE_A3, NOTE_G3, 0, NOTE_B3, NOTE_C4
+};
+
+// note durations: 4 = quarter note, 8 = eighth note, etc.:
+int noteDurations[] = {
+  4, 8, 8, 4, 4, 4, 4, 4
+};
+
+    //variables de funcionamiento
+ 
+   int ciclo = 3; //cantidad de llenados de agua (javon, aclarado, suavizante)
+   int trabajo = 2; //(llenado, labado, vaciado, centrifugado)
+   int motor = 0; //contafor de vueltas
+   int music = 2; //contador cancion finalizado
+   int dura = 90; //vueltas/tiempo lavado
+   int acla = 60; //vueltas tiempo aclarado
+   int vuelta = 2000; //duración giro 
+   int pausa = 1800; //pausa motor
+   int lleno = 0; // estado del nivel de agua
+   int vacio = 0; //fondo depósito
+   int secad = 5; //tiempo centrifugado en minutos
+   int centri = 1; //contador centrifugados
+   int prevac = 0;//ciclo de aceleraciones ok
+   int acel = 5000; //tiempo aceleraciones
+   int pausel = 3000; //tiempo pausas
+   
+   
+void setup() {
+
+// Configuramos el puerto serial a 9600 bps
+  Serial.begin(9600);
+
+  // Envia datos al puerto serial
+
+             Serial.print("Variables de funcionamiento en milisegundos");
+             Serial.print("\n");
+
+             Serial.print("Ciclos = ");
+             Serial.print(ciclo);
+             Serial.print("\n");
+             
+             Serial.print("Trabajo actual = ");
+             Serial.print(trabajo);
+             Serial.print("\n");
+             
+             Serial.print("Vueltas lavado = ");
+             Serial.print(dura);
+             Serial.print("\n");
+
+
+             Serial.print("Vueltas aclarado = ");
+             Serial.print(acla);
+             Serial.print("\n");
+                      
+             Serial.print("Duración giros = ");
+             Serial.print(vuelta);
+             Serial.print("\n");  
+             
+             Serial.print("Duración pausas = ");
+             Serial.print(pausa);
+             Serial.print("\n");
+
+             Serial.print("Centrifugado = ");
+             Serial.print(centri);
+             Serial.print("\n");
+             
+             Serial.print("Aceleraciones = ");
+             Serial.print(acel);
+             Serial.print("\n");
+
+             Serial.print("Punto muerto = ");
+             Serial.print(pausel);
+             Serial.print("\n");
+
+
+             
+   // iterate over the notes of the melody:
+  for (int thisNote = 0; thisNote < 8; thisNote++) {
+
+    // to calculate the note duration, take one second divided by the note type.
+    //e.g. quarter note = 1000 / 4, eighth note = 1000/8, etc.
+    int noteDuration = 1000 / noteDurations[thisNote];
+    tone(8, melody[thisNote], noteDuration);
+
+    // to distinguish the notes, set a minimum time between them.
+    // the note's duration + 30% seems to work well:
+    int pauseBetweenNotes = noteDuration * 1.30;
+    delay(pauseBetweenNotes);
+    // stop the tone playing:
+    noTone(8);
+  }
+      // initialize digital pin LED_BUILTIN as an output.
+  pinMode(13, OUTPUT); //Led power
+  pinMode(12, OUTPUT); //válvula
+  pinMode(11, OUTPUT); //motor 
+  pinMode(10, OUTPUT); //dirección motor
+  pinMode(9, OUTPUT);  //bomba 
+  //pinMode(8, OUTPUT); //Altavoz
+  pinMode(7, OUTPUT);  //Valvula suavizante
+  pinMode(6, OUTPUT);  //Led Ciclo 1 detergente
+  pinMode(5, OUTPUT);  //Led Ciclo 2 Aclarado
+  pinMode(4, OUTPUT);  //Led Ciclo 3 Suavizante
+  pinMode(3, INPUT);  //medidor fondo depósito
+  pinMode(2, INPUT);  //medidor nivel agua de trabajo
+}
+
+// the loop function runs over and over again forever
+void loop() {
+  if (ciclo >  2) { //luz detergente
+     Serial.print(" ***Lavado*** ");
+     Serial.print("\n");
+     digitalWrite(6, HIGH);    
+     digitalWrite(5, LOW);
+     digitalWrite(4, LOW);
+    }
+   if (ciclo ==  2) { //luz aclarado
+     Serial.print(" ***Aclarado*** ");
+     Serial.print("\n");
+     digitalWrite(6, LOW);    
+     digitalWrite(5, HIGH);
+     digitalWrite(4, LOW);
+    }
+   if (ciclo == 1) {
+     Serial.print(" ***Suavizante*** ");
+     Serial.print("\n");
+     digitalWrite(6, LOW);    
+     digitalWrite(5, LOW);
+     digitalWrite(4, HIGH);    
+    }
+ if (ciclo >  0) {
+  digitalWrite(13, HIGH);
+ 
+    //llena agua
+      if (trabajo ==  1) {
+      
+
+          Serial.print("Llenando");
+          Serial.print("\n");
+
+          lleno = digitalRead(2);
+          
+            if (lleno == HIGH) { //si está lleno
+            Serial.print("Lleno");
+             Serial.print("\n");
+            digitalWrite(12, LOW);
+            digitalWrite(7, LOW);
+            Serial.print("Motor ON");
+            Serial.print("\n"); 
+          trabajo++;
+
+              }
+              else {
+              Serial.println("Llenando");
+                if (ciclo == 1){
+                  digitalWrite(7, HIGH); 
+                }
+                else {
+                  digitalWrite(12, HIGH); 
+                }
+              delay(2000);
+               }
+         
+          
+     
+
+          //!!!!!si ciclo = penúltimo, válvula suavizante
+        }
+        
+    //ciclo motor
+     if (trabajo ==  2) {
+        if (motor <  dura) {
+              digitalWrite(11, HIGH); // motor on
+              delay(vuelta);            // waits for a second
+              digitalWrite(11, LOW);  // motor off
+              delay(pausa);  
+              digitalWrite(10, HIGH); // derecha on
+              delay(100);  
+              digitalWrite(11, HIGH); // motor on
+              delay(vuelta);            // waits for a second
+              digitalWrite(11, LOW);  // motor off
+              delay(100);  
+              digitalWrite(10, LOW);  // derecha off
+              delay(pausa);  
+              motor++;
+                // Envia el dato al puerto serial
+                Serial.print("Vueltas pendientes = ");
+             Serial.print(dura - motor);
+            // Salto de línea
+              Serial.print("\n");
+              
+        }
+        if (motor == dura){
+          motor = 0;
+          dura = acla;
+          trabajo++;
+          Serial.print("Vaciando");
+          Serial.print("\n");
+        }
+   }
+    //vaciado  //centrifugado 
+   if (trabajo == 3){
+
+          vacio = digitalRead(3);
+          
+            if (vacio == HIGH) { //si está lleno
+            digitalWrite(9, HIGH);//arrancar bomba
+            delay(5000);
+             Serial.print("Vaciando");
+              Serial.print(vacio);
+              }
+              else {
+                if (prevac == 0){
+                  
+      Serial.print("Centrifugado -");
+      Serial.print(centri);
+      Serial.print("\n");
+      digitalWrite(9, HIGH);//arrancar bomba
+      delay(10000);//NO QUITAR //¡¡¡¡¡ seguro engranaje del motor !!!!
+   
+      digitalWrite(11, HIGH);
+      delay(acel);
+      digitalWrite(11, LOW);
+       delay(pausel);
+      digitalWrite(11, HIGH);
+      delay(acel);
+      digitalWrite(11, LOW);
+       delay(pausel);
+      digitalWrite(11, HIGH);
+      delay(acel);
+      digitalWrite(11, LOW);
+       delay(pausel);
+      digitalWrite(11, HIGH);
+      prevac++;
+      centri = secad;
+                }
+      if (prevac == 1){
+              if (centri > 0){
+                  digitalWrite(11, HIGH);
+                  Serial.print("- ");
+                  Serial.print(centri);
+                  Serial.print("\n");
+                  delay(30000);
+                  delay(30000);
+                  centri--;
+                   }
+              else {
+                   digitalWrite(11, LOW);
+                   digitalWrite(9, LOW);
+                    Serial.print("\n");
+                    Serial.print("\n");
+                    Serial.print("\n");
+                  trabajo = 1;
+                  prevac = 0;
+                  ciclo--;
+                    }
+        }
+      
+
+              }
+      }
+    }
+
+ if (ciclo == 0) {
+     digitalWrite(6, LOW);    
+     digitalWrite(5, LOW);
+     digitalWrite(4, LOW);    
+     digitalWrite(13, HIGH);
+     delay(1000);
+     digitalWrite(13, LOW);
+     delay(1000);
+       if (music > 0) {
+        Serial.print("Finalizado!!!");
+           // iterate over the notes of the melody:
+          for (int thisNote = 0; thisNote < 8; thisNote++) {
+        
+            // to calculate the note duration, take one second divided by the note type.
+            //e.g. quarter note = 1000 / 4, eighth note = 1000/8, etc.
+            int noteDuration = 1000 / noteDurations[thisNote];
+            tone(8, melody[thisNote], noteDuration);
+        
+            // to distinguish the notes, set a minimum time between them.
+            // the note's duration + 30% seems to work well:
+            int pauseBetweenNotes = noteDuration * 1.30;
+            delay(pauseBetweenNotes);
+            // stop the tone playing:
+            noTone(8);
+           }
+           music--;
+ }
+ }
+}
